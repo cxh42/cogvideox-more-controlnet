@@ -50,7 +50,7 @@ from diffusers.utils import check_min_version, export_to_video, is_wandb_availab
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.torch_utils import is_compiled_module
 
-from controlnet_datasets import OpenvidControlnetDataset
+from controlnet_datasets import OpenvidControlnetDataset, RGBDepthTextDataset
 from controlnet_pipeline import ControlnetCogVideoXPipeline
 from cogvideo_transformer import CustomCogVideoXTransformer3DModel
 from cogvideo_controlnet import CogVideoXControlnet
@@ -101,6 +101,29 @@ def get_args():
         default=None,
         required=True,
         help=("A path to csv."),
+    )
+    parser.add_argument(
+        "--rgb_dir",
+        type=str,
+        default=None,
+        help=("RGB视频目录路径"),
+    )
+    parser.add_argument(
+        "--depth_dir",
+        type=str,
+        default=None,
+        help=("深度图视频目录路径"),
+    )
+    parser.add_argument(
+        "--text_dir",
+        type=str,
+        default=None,
+        help=("文本描述目录路径"),
+    )
+    parser.add_argument(
+        "--use_custom_dataset",
+        action="store_true",
+        help="是否使用自定义的RGB-深度图-文本数据集",
     )
     parser.add_argument(
         "--stride_min",
@@ -882,15 +905,28 @@ def main(args):
     optimizer = get_optimizer(args, params_to_optimize, use_deepspeed=use_deepspeed_optimizer)
 
     # Dataset and DataLoader
-    train_dataset = OpenvidControlnetDataset(
-        video_root_dir=args.video_root_dir,
-        csv_path=args.csv_path,
-        image_size=(args.height, args.width), 
-        stride=(args.stride_min, args.stride_max),
-        sample_n_frames=args.max_num_frames,
-        hflip_p=args.hflip_p,
-        controlnet_type=args.controlnet_type,
-    )
+    if args.use_custom_dataset:
+        train_dataset = RGBDepthTextDataset(
+            rgb_dir=args.rgb_dir,
+            depth_dir=args.depth_dir, 
+            text_dir=args.text_dir,
+            video_root_dir=args.video_root_dir,  # 可以不使用，但保留以兼容基类
+            image_size=(args.height, args.width), 
+            stride=(args.stride_min, args.stride_max),
+            sample_n_frames=args.max_num_frames,
+            hflip_p=args.hflip_p,
+            controlnet_type=args.controlnet_type,
+        )
+    else:
+        train_dataset = OpenvidControlnetDataset(
+            video_root_dir=args.video_root_dir,
+            csv_path=args.csv_path,
+            image_size=(args.height, args.width), 
+            stride=(args.stride_min, args.stride_max),
+            sample_n_frames=args.max_num_frames,
+            hflip_p=args.hflip_p,
+            controlnet_type=args.controlnet_type,
+        )
         
     def encode_video(video):
         video = video.to(accelerator.device, dtype=vae.dtype)
@@ -1127,7 +1163,22 @@ def main(args):
                     validation_videos = args.validation_video.split(args.validation_prompt_separator)
                     for validation_prompt, validation_video in zip(validation_prompts, validation_videos):
                         numpy_frames = read_video(validation_video, frames_count=args.max_num_frames)
-                        controlnet_frames = np.stack([train_dataset.controlnet_processor(x) for x in numpy_frames])
+                        
+                        # 根据controlnet类型处理验证视频
+                        if args.controlnet_type == 'depth':
+                            # 找到对应的深度图验证视频
+                            depth_validation_video = validation_video.replace('rgb', 'depth')
+                            if os.path.exists(depth_validation_video):
+                                controlnet_frames = read_video(depth_validation_video, frames_count=args.max_num_frames)
+                            else:
+                                # 如果没有对应的深度图视频，使用深度图处理器处理
+                                from controlnet_aux import DepthDetector
+                                depth_processor = DepthDetector.from_pretrained('lllyasviel/Annotators')
+                                controlnet_frames = np.stack([depth_processor(x) for x in numpy_frames])
+                        else:
+                            # 对于其他类型，使用训练数据集中的处理器
+                            controlnet_frames = np.stack([train_dataset.controlnet_processor(x) for x in numpy_frames])
+                        
                         pipeline_args = {
                             "prompt": validation_prompt,
                             "controlnet_frames": controlnet_frames,

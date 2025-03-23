@@ -19,3 +19,6 @@ moviepy>=1.0.3
 pillow==9.5.0
 denku==0.0.51
 controlnet-aux==0.0.9
+controlnet-aux>=0.0.10
+midas==1.8.0
+timm>=0.6.13
