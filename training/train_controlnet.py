@@ -44,7 +44,6 @@ from diffusers.optimization import get_scheduler
 from diffusers.pipelines.cogvideo.pipeline_cogvideox import get_resize_crop_region_for_grid
 from diffusers.training_utils import (
     cast_training_params,
-    clear_objs_and_retain_memory,
 )
 from diffusers.utils import check_min_version, export_to_video, is_wandb_available
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
@@ -503,7 +502,8 @@ def log_validation(
         filename = os.path.join(args.output_dir, f"{epoch}_video_{i}_{prompt}.mp4")
         export_to_video(video, filename, fps=8)
 
-    clear_objs_and_retain_memory([pipe])
+    del pipe
+    torch.cuda.empty_cache()
 
     return videos
 

@@ -11,7 +11,7 @@ import torchvision.transforms as transforms
 from PIL import Image
 from decord import VideoReader
 from torch.utils.data.dataset import Dataset
-from controlnet_aux import CannyDetector, HEDdetector, DepthDetector
+from controlnet_aux import CannyDetector, HEDdetector
 
 
 def unpack_mm_params(p):
@@ -38,15 +38,19 @@ def resize_for_crop(image, min_h, min_w):
 
 
 def init_controlnet(controlnet_type):
-    if controlnet_type in ['canny']:
+    if controlnet_type == 'depth':
+        # 对于depth类型，返回None
+        return None
+    elif controlnet_type in ['canny']:
         return controlnet_mapping[controlnet_type]()
-    return controlnet_mapping[controlnet_type].from_pretrained('lllyasviel/Annotators').to(device='cuda')
+    else:
+        return controlnet_mapping[controlnet_type].from_pretrained('lllyasviel/Annotators').to(device='cuda')
 
 
 controlnet_mapping = {
     'canny': CannyDetector,
     'hed': HEDdetector,
-    'depth': DepthDetector,
+    'depth': None,  # 为depth设置为None，因为我们直接使用预生成的深度图
 }
 
 
@@ -157,11 +161,16 @@ class OpenvidControlnetDataset(BaseClass):
 
 class RGBDepthTextDataset(BaseClass):
     def __init__(self, rgb_dir, depth_dir, text_dir, *args, **kwargs):
+        # 调用父类初始化，但不初始化controlnet_processor
         super().__init__(*args, **kwargs)
         self.rgb_dir = rgb_dir
         self.depth_dir = depth_dir
         self.text_dir = text_dir
         
+        # 如果是深度图类型，明确设置处理器为None
+        if self.controlnet_type == 'depth':
+            self.controlnet_processor = None
+            
         # 获取所有RGB视频文件
         self.rgb_files = glob.glob(os.path.join(self.rgb_dir, "*.mp4"))
         # 提取编号部分用于匹配
